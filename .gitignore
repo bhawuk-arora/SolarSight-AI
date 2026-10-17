@@ -1,0 +1,25 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local output and generated data
+result.json
+weather.json
+
+# Local backups
+*.before-*
+*.broken-backup
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store

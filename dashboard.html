@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SolarSight AI | Solar Intelligence</title>
+<style>
+:root{font-family:Inter,system-ui,Arial,sans-serif;color:#eaf1ff;background:#0b1220}
+*{box-sizing:border-box}body{margin:0;padding:28px;max-width:1250px;margin:auto}
+header{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
+.brand{font-size:25px;font-weight:750}.brand span{color:#f5bf52}
+.muted{color:#9baac4;font-size:13px}.tag{border:1px solid #355548;color:#8fe0b0;border-radius:20px;padding:7px 12px;font-size:12px}
+h1{font-size:30px;margin:32px 0 8px}.sub{color:#aab7cd;margin:0 0 24px}
+.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.card,.panel{background:#131e30;border:1px solid #24334b;border-radius:15px;padding:20px}
+.label{color:#aab7cd;font-size:13px}.value{font-size:27px;font-weight:700;margin-top:12px}
+.unit{font-size:13px;color:#aab7cd;font-weight:400}
+.controls{display:flex;gap:12px;align-items:end;flex-wrap:wrap;margin:22px 0}
+label{display:block;color:#aab7cd;font-size:13px;margin-bottom:8px}
+input,button{background:#0b1220;color:#fff;border:1px solid #34445e;border-radius:8px;padding:11px;font-size:14px}
+button{background:#f5bf52;color:#142033;border:0;font-weight:700;cursor:pointer}
+.panel{margin-top:16px}.panel h2{font-size:17px;margin:0 0 6px}
+canvas{width:100%;height:280px;display:block;margin-top:18px}
+.note{color:#aab7cd;font-size:12px;line-height:1.6;margin-top:18px}
+#error{color:#ff9c9c;margin-top:10px}
+@media(max-width:800px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}body{padding:16px}}
+@media(max-width:430px){.cards{grid-template-columns:1fr 1fr}.value{font-size:21px}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">☀ SolarSight <span>AI</span><div class="muted">Renewable energy intelligence</div></div>
+  <div class="tag">● WEATHER DATA CONNECTED</div>
+</header>
+<h1>Solar forecast</h1>
+<p class="sub">Explore weather-driven rooftop solar estimates for the next 48 hours.</p>
+
+<div class="controls">
+  <div><label for="capacity">System capacity (kW)</label><input id="capacity" type="number" min="0.1" max="10000" step="0.5" value="5"></div>
+  <div><label for="lat">Latitude</label><input id="lat" type="number" step="0.0001" value="26.2389"></div>
+  <div><label for="lon">Longitude</label><input id="lon" type="number" step="0.0001" value="73.0243"></div>
+  <div><label for="model">Forecast model</label>
+    <select id="model" style="background:#0b1220;color:#fff;border:1px solid #34445e;border-radius:8px;padding:11px;font-size:14px">
+      <option value="baseline">Baseline</option>
+      <option value="advanced">Advanced PV (pvlib)</option>
+    </select>
+  </div>
+  <div><label for="tilt">Panel tilt (°)</label><input id="tilt" type="number" min="0" max="90" step="1" value="20"></div>
+  <div><label for="azimuth">Panel azimuth (°)</label><input id="azimuth" type="number" min="0" max="360" step="1" value="180"></div>
+  <button id="refresh">Update forecast</button>
+</div>
+
+<div class="cards">
+  <div class="card"><div class="label">Estimated energy · 48h</div><div class="value" id="energy">— <span class="unit">kWh</span></div></div>
+  <div class="card"><div class="label">Peak estimated power</div><div class="value" id="peak">— <span class="unit">kW</span></div></div>
+  <div class="card"><div class="label">Average cloud cover</div><div class="value" id="cloud">— <span class="unit">%</span></div></div>
+  <div class="card"><div class="label">Average temperature</div><div class="value" id="temp">— <span class="unit">°C</span></div></div>
+</div>
+
+<section class="panel">
+  <h2>Hourly estimated solar output</h2>
+  <div class="muted">Estimated energy per one-hour interval (kWh)</div>
+  <canvas id="chart"></canvas>
+  <div class="note" id="location">Loading forecast location…</div>
+  <div id="error"></div>
+</section>
+
+
+<section class="panel" id="comparisonPanel">
+  <h2>Baseline vs Advanced PV</h2>
+  <p class="muted">Compare both models for the same system and forecast window.</p>
+  <div class="cards" style="margin-top:14px">
+    <div class="card">
+      <div class="label">Baseline estimate</div>
+      <div class="value" id="baselineEnergy">— <span class="unit">kWh</span></div>
+    </div>
+    <div class="card">
+      <div class="label">Advanced PV estimate</div>
+      <div class="value" id="advancedEnergy">— <span class="unit">kWh</span></div>
+    </div>
+    <div class="card">
+      <div class="label">Absolute difference</div>
+      <div class="value" id="comparisonDifference">— <span class="unit">kWh</span></div>
+    </div>
+    <div class="card">
+      <div class="label">Difference vs baseline</div>
+      <div class="value" id="comparisonPercent">— <span class="unit">%</span></div>
+    </div>
+  </div>
+  <p class="note" id="comparisonStatus">Update the forecast to compare both models.</p>
+  <p class="note">A difference between model estimates indicates sensitivity to assumptions, not which model is more accurate. Neither estimate is validated against measured generation.</p>
+</section>
+
+<section class="panel">
+  <h2>Gemini AI insights</h2>
+  <p class="muted">AI interpretation grounded in the current weather forecast.</p>
+  <button id="explainButton">Generate AI insights</button>
+  <p id="aiStatus" class="note">Generate an explanation to interpret this forecast.</p>
+  <div id="aiResult" style="white-space:pre-wrap;line-height:1.7;margin-top:12px"></div>
+</section>
+
+<section class="panel">
+  <h2>Data provenance</h2>
+  <p class="muted">Source and coverage of the latest weather forecast.</p>
+  <div id="provenance" class="note">Waiting for forecast data…</div>
+</section>
+
+<section class="panel">
+  <h2>How to interpret this forecast</h2>
+  <p class="note" id="modelNote">Baseline: forecast shortwave radiation with an assumed 80% performance ratio. Estimates are not measured generation or site-calibrated predictions.</p>
+</section>
+
+<script>
+let forecastData = [];
+let comparisonData = [];
+function drawChart() {
+  const canvas = document.getElementById("chart");
+  const rect = canvas.getBoundingClientRect();
+  const ratio = window.devicePixelRatio || 1;
+  const w = rect.width;
+  const h = 280;
+
+  canvas.width = Math.max(1, Math.round(w * ratio));
+  canvas.height = Math.round(h * ratio);
+
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  const left = 42, right = 14, top = 24, bottom = 46;
+  const plotW = Math.max(1, w - left - right);
+  const plotH = h - top - bottom;
+
+  const baseline = comparisonData;
+  const advancedByTime = new Map(
+    comparisonData.map(d => [d.time, d.advanced])
+  );
+  const hasComparison = baseline.length > 0;
+  const times = hasComparison
+    ? baseline.map(d => d.time)
+    : forecastData.map(d => d.time);
+
+  const baselineValues = hasComparison
+    ? baseline.map(d => d.baseline)
+    : forecastData.map(d => d.estimated_energy_kwh ?? 0);
+
+  const advancedValues = hasComparison
+    ? times.map(t => advancedByTime.get(t))
+    : [];
+
+  const allValues = [...baselineValues, ...advancedValues]
+    .filter(Number.isFinite);
+  const max = Math.max(1, ...allValues) * 1.12;
+
+  ctx.font = "11px system-ui";
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = "#2a3a52";
+  ctx.fillStyle = "#9baac4";
+
+  for (let j = 0; j <= 4; j++) {
+    const y = top + plotH * j / 4;
+    ctx.beginPath();
+    ctx.moveTo(left, y);
+    ctx.lineTo(w - right, y);
+    ctx.stroke();
+    ctx.fillText((max * (1 - j / 4)).toFixed(1), 4, y + 4);
+  }
+
+  const step = plotW / Math.max(1, times.length);
+  const bw = Math.max(1, step * (hasComparison ? 0.58 : 0.68));
+
+  baselineValues.forEach((v, i) => {
+    if (!Number.isFinite(v)) return;
+    const bh = Math.max(0, v / max * plotH);
+    const x = left + i * step + (step - bw) / 2;
+    const y = top + plotH - bh;
+    ctx.fillStyle = "#f5bf52";
+    ctx.fillRect(x, y, bw, bh);
+  });
+
+  if (hasComparison) {
+    ctx.beginPath();
+    let started = false;
+
+    advancedValues.forEach((v, i) => {
+      if (!Number.isFinite(v)) {
+        started = false;
+        return;
+      }
+      const x = left + i * step + step / 2;
+      const y = top + plotH - (v / max * plotH);
+      if (!started) {
+        ctx.moveTo(x, y);
+        started = true;
+      } else {
+        ctx.lineTo(x, y);
+      }
+    });
+
+    ctx.strokeStyle = "#63b3ff";
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+
+    advancedValues.forEach((v, i) => {
+      if (!Number.isFinite(v)) return;
+      const x = left + i * step + step / 2;
+      const y = top + plotH - (v / max * plotH);
+      ctx.beginPath();
+      ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = "#63b3ff";
+      ctx.fill();
+    });
+  }
+
+  // Legend
+  ctx.fillStyle = "#f5bf52";
+  ctx.fillRect(left, 5, 10, 10);
+  ctx.fillStyle = "#eaf1ff";
+  ctx.fillText(hasComparison ? "Baseline" : "Selected model", left + 15, 14);
+
+  if (hasComparison) {
+    ctx.beginPath();
+    ctx.moveTo(left + 105, 10);
+    ctx.lineTo(left + 119, 10);
+    ctx.strokeStyle = "#63b3ff";
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    ctx.fillStyle = "#eaf1ff";
+    ctx.fillText("Advanced PV", left + 124, 14);
+  }
+
+  ctx.fillStyle = "#9baac4";
+  const labelIndexes = [
+    0,
+    Math.floor((times.length - 1) / 4),
+    Math.floor((times.length - 1) / 2),
+    Math.floor(3 * (times.length - 1) / 4),
+    times.length - 1
+  ];
+
+  [...new Set(labelIndexes)].forEach(i => {
+    if (i < 0 || !times[i]) return;
+    const x = Math.min(w - 78, Math.max(left, left + i * step));
+    ctx.fillText(String(times[i]).slice(5, 16).replace("T", " "), x, h - 15);
+  });
+}
+async function loadModelComparison() {
+  const status = document.getElementById("comparisonStatus");
+  const ids = ["baselineEnergy", "advancedEnergy",
+               "comparisonDifference", "comparisonPercent"];
+
+  status.textContent = "Comparing both models…";
+
+  try {
+    const capacity = Number(document.getElementById("capacity").value);
+    const lat = Number(document.getElementById("lat").value);
+    const lon = Number(document.getElementById("lon").value);
+    const tilt = Number(document.getElementById("tilt").value);
+    const azimuth = Number(document.getElementById("azimuth").value);
+
+    const common = new URLSearchParams({
+      capacity_kw: String(capacity),
+      latitude: String(lat),
+      longitude: String(lon)
+    });
+
+    const advancedParams = new URLSearchParams(common);
+    advancedParams.set("tilt", String(tilt));
+    advancedParams.set("azimuth", String(azimuth));
+
+    const [baselineResponse, advancedResponse] = await Promise.all([
+      fetch(`/forecast?${common.toString()}`),
+      fetch(`/forecast/advanced?${advancedParams.toString()}`)
+    ]);
+
+    const [baseline, advanced] = await Promise.all([
+      baselineResponse.json(),
+      advancedResponse.json()
+    ]);
+
+    if (!baselineResponse.ok)
+      throw new Error(baseline.detail || "Baseline forecast failed.");
+    if (!advancedResponse.ok)
+      throw new Error(advanced.detail || "Advanced forecast failed.");
+
+    // Normalize timestamps to the hour in the forecast's local timezone.
+    function hourKey(value) {
+      const text = String(value || "");
+      const date = text.slice(0, 10);
+      const hour = text.slice(11, 13);
+      return date.length === 10 && hour.length === 2
+        ? `${date}T${hour}`
+        : text;
+    }
+
+    const baselineHours = new Map(
+      (baseline.hourly_forecast || []).map(row => [
+        hourKey(row.time),
+        {
+          time: row.time,
+          value: Number(row.estimated_energy_kwh ?? row.estimated_power_kw)
+        }
+      ])
+    );
+    const advancedHours = new Map(
+      (advanced.hourly_forecast || []).map(row => [
+        hourKey(row.time),
+        {
+          time: row.time,
+          value: Number(row.estimated_energy_kwh ?? row.estimated_power_kw)
+        }
+      ])
+    );
+
+    comparisonData = [...baselineHours.keys()]
+      .filter(key => advancedHours.has(key))
+      .map(key => ({
+        time: baselineHours.get(key).time,
+        baseline: baselineHours.get(key).value,
+        advanced: advancedHours.get(key).value
+      }))
+      .filter(row =>
+        Number.isFinite(row.baseline) &&
+        Number.isFinite(row.advanced)
+      );
+
+    // Keep the chart usable if the endpoints have no overlapping hours.
+    if (comparisonData.length > 0) {
+      drawChart();
+    } else {
+      console.warn("No matching hourly timestamps between forecast models.");
+    }
+
+    const baselineKwh = Number(
+      baseline.estimated_energy_next_48h_kwh ?? baseline.energy_kwh
+    );
+    const advancedKwh = Number(
+      advanced.estimated_energy_next_48h_kwh ?? advanced.energy_kwh
+    );
+
+    if (!Number.isFinite(baselineKwh) ||
+        !Number.isFinite(advancedKwh)) {
+      throw new Error("One model did not return a valid energy estimate.");
+    }
+
+    const difference = advancedKwh - baselineKwh;
+    const percentage = baselineKwh !== 0
+      ? difference / baselineKwh * 100
+      : null;
+
+    document.getElementById("baselineEnergy").innerHTML =
+      `${baselineKwh.toFixed(2)} <span class="unit">kWh</span>`;
+    document.getElementById("advancedEnergy").innerHTML =
+      `${advancedKwh.toFixed(2)} <span class="unit">kWh</span>`;
+    document.getElementById("comparisonDifference").innerHTML =
+      `${Math.abs(difference).toFixed(2)} <span class="unit">kWh</span>`;
+    document.getElementById("comparisonPercent").innerHTML =
+      percentage === null
+        ? `— <span class="unit">%</span>`
+        : `${percentage >= 0 ? "+" : ""}${percentage.toFixed(1)} <span class="unit">%</span>`;
+
+    const direction = difference > 0
+      ? "Advanced estimates more energy"
+      : difference < 0
+        ? "Advanced estimates less energy"
+        : "Both models estimate the same energy";
+
+    status.textContent =
+      `${direction}. Signed change: ${difference >= 0 ? "+" : ""}` +
+      `${difference.toFixed(2)} kWh` +
+      (percentage === null ? "." : ` (${percentage >= 0 ? "+" : ""}${percentage.toFixed(1)}% vs baseline).`);
+  } catch (err) {
+    status.textContent = `Comparison unavailable: ${err.message}`;
+    console.error("Model comparison failed:", err);
+    // Do not clear existing metric values just because the overlay failed.
+  }
+}
+
+async function loadForecast(){
+  const error=document.getElementById("error");
+  error.textContent="";
+  const button=document.getElementById("refresh");
+  button.disabled=true;button.textContent="Loading…";
+  try{
+    const capacity=Number(document.getElementById("capacity").value);
+    const lat=Number(document.getElementById("lat").value);
+    const lon=Number(document.getElementById("lon").value);
+    if(!(capacity>0 && capacity<=10000 && lat>=-90 && lat<=90 && lon>=-180 && lon<=180)) {
+      throw new Error("Enter a valid capacity, latitude and longitude.");
+    }
+    const model=document.getElementById("model").value;
+    const tilt=Number(document.getElementById("tilt").value);
+    const azimuth=Number(document.getElementById("azimuth").value);
+    if(model==="advanced" && (!(tilt>=0 && tilt<=90) || !(azimuth>=0 && azimuth<=360))) {
+      throw new Error("Panel tilt must be 0–90° and azimuth 0–360°.");
+    }
+    const endpoint=model==="advanced" ? "/forecast/advanced" : "/forecast";
+    const extra=model==="advanced" ? `&tilt=${tilt}&azimuth=${azimuth}` : "";
+    const response=await fetch(`${endpoint}?capacity_kw=${capacity}&latitude=${lat}&longitude=${lon}${extra}`);
+    const data=await response.json();
+    if(!response.ok) throw new Error(data.detail || "Forecast request failed.");
+
+    forecastData=data.hourly_forecast.map(x => ({
+      ...x,
+      estimated_energy_kwh:x.estimated_energy_kwh ?? x.estimated_power_kw,
+      estimated_power_kw:x.estimated_power_kw,
+    }));
+    const provenance=data.data_provenance;
+    const first=forecastData[0]?.time ?? "unavailable";
+    const last=forecastData[forecastData.length-1]?.time ?? "unavailable";
+    document.getElementById("provenance").textContent = provenance
+      ? `Source: ${provenance.provider} · Retrieved: ${provenance.retrieved_at_utc} · Forecast: ${first} to ${last} · Records: ${forecastData.length}`
+      : "Source metadata unavailable. Refresh the forecast and try again.";
+    document.getElementById("energy").innerHTML=`${data.estimated_energy_next_48h_kwh ?? data.energy_kwh} <span class="unit">kWh</span>`;
+    document.getElementById("peak").innerHTML=`${Math.max(...forecastData.map(x=>x.estimated_power_kw)).toFixed(2)} <span class="unit">kW</span>`;
+
+    const cloudValues=forecastData.map(x=>x.cloud_cover_percent).filter(Number.isFinite);
+    const tempValues=forecastData.map(x=>x.temperature_c ?? x.cell_temperature_c).filter(Number.isFinite);
+    document.getElementById("cloud").innerHTML=cloudValues.length
+      ? `${(cloudValues.reduce((a,b)=>a+b,0)/cloudValues.length).toFixed(1)} <span class="unit">%</span>`
+      : `— <span class="unit">not provided</span>`;
+    document.getElementById("temp").innerHTML=tempValues.length
+      ? `${(tempValues.reduce((a,b)=>a+b,0)/tempValues.length).toFixed(1)} <span class="unit">°C</span>`
+      : `— <span class="unit">not provided</span>`;
+    document.getElementById("location").textContent=`Forecast location: ${data.location.latitude}, ${data.location.longitude} · ${data.location.timezone} · ${forecastData.length} hourly records`;
+    document.getElementById("modelNote").textContent=model==="advanced"
+      ? `Advanced pvlib estimate · Tilt ${tilt}° · Azimuth ${azimuth}°. Temperature-adjusted illustrative model; assumed parameters, no shading or site calibration.`
+      : "Baseline estimate · Forecast shortwave radiation and assumed 80% performance ratio. Not measured or site-calibrated.";
+    drawChart();
+  }catch(e){error.textContent=e.message;}
+  finally{button.disabled=false;button.textContent="Update forecast";}
+}
+
+
+function renderAIInsights(text, container) {
+  container.replaceChildren();
+
+  const lines = String(text || "").split(/\r?\n/);
+  let list = null;
+
+  function addInlineText(parent, value) {
+    const parts = value.split(/(\*\*.*?\*\*)/g);
+    for (const part of parts) {
+      if (part.startsWith("**") && part.endsWith("**") && part.length >= 4) {
+        const strong = document.createElement("strong");
+        strong.textContent = part.slice(2, -2);
+        parent.appendChild(strong);
+      } else {
+        parent.appendChild(document.createTextNode(part));
+      }
+    }
+  }
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+
+    if (!line) {
+      list = null;
+      continue;
+    }
+
+    const heading = line.match(/^#{1,3}\s+(.+)$/);
+    const bullet = line.match(/^[-*]\s+(.+)$/);
+    const numbered = line.match(/^\d+[.)]\s+(.+)$/);
+
+    if (heading) {
+      list = null;
+      const element = document.createElement("h3");
+      addInlineText(element, heading[1].replace(/\*\*/g, ""));
+      element.style.margin = "18px 0 8px";
+      container.appendChild(element);
+    } else if (bullet || numbered) {
+      if (!list) {
+        list = document.createElement(bullet ? "ul" : "ol");
+        list.style.paddingLeft = "24px";
+        container.appendChild(list);
+      }
+      const item = document.createElement("li");
+      addInlineText(item, (bullet || numbered)[1]);
+      item.style.marginBottom = "6px";
+      list.appendChild(item);
+    } else {
+      list = null;
+      const paragraph = document.createElement("p");
+      paragraph.style.margin = "8px 0";
+      addInlineText(paragraph, line);
+      container.appendChild(paragraph);
+    }
+  }
+}
+
+document.getElementById("explainButton").addEventListener("click", async () => {
+  const button = document.getElementById("explainButton");
+  const status = document.getElementById("aiStatus");
+  const result = document.getElementById("aiResult");
+  button.disabled = true;
+  button.textContent = "Analyzing forecast…";
+  status.textContent = "Gemini is analyzing the latest forecast data.";
+  result.textContent = "";
+  try {
+    const capacity = Number(document.getElementById("capacity").value);
+    const lat = Number(document.getElementById("lat").value);
+    const lon = Number(document.getElementById("lon").value);
+    const model = document.getElementById("model").value;
+    const tilt = Number(document.getElementById("tilt").value);
+    const azimuth = Number(document.getElementById("azimuth").value);
+
+    const params = new URLSearchParams({
+      capacity_kw: String(capacity),
+      latitude: String(lat),
+      longitude: String(lon),
+      model,
+      tilt: String(tilt),
+      azimuth: String(azimuth),
+    });
+
+    const response = await fetch(`/explain?${params.toString()}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "Explanation request failed.");
+    renderAIInsights(data.explanation, result);
+    status.textContent =
+      `Gemini · ${data.model} · ${data.forecast_model} model · ` +
+      `Estimated forecast energy: ${data.forecast_energy_estimate_kwh} kWh`;
+  } catch (err) {
+    status.textContent = "Could not generate AI insights.";
+    result.textContent = err.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = "Generate AI insights";
+  }
+});
+
+document.getElementById("refresh").addEventListener("click", async () => {
+  await loadForecast();
+  await loadModelComparison();
+});
+window.addEventListener("resize",drawChart);
+loadForecast().then(loadModelComparison);
+</script>
+</body>
+</html>
