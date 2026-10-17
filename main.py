@@ -44,7 +44,7 @@ def forecast(
         ),
         "forecast_hours": 48,
         "past_hours": 0,
-        "timezone": "Asia/Kolkata",
+        "timezone": "auto",
     }
 
     try:
@@ -101,7 +101,7 @@ def forecast(
             "retrieved_at_utc": datetime.now(timezone.utc).isoformat(),
             "forecast_start_local": hourly["time"][0] if hourly["time"] else None,
             "forecast_end_local": hourly["time"][-1] if hourly["time"] else None,
-            "timezone": data.get("timezone", "Asia/Kolkata"),
+            "timezone": data.get("timezone", "UTC"),
             "requested_forecast_hours": 48,
             "returned_hourly_records": len(hourly["time"]),
         },
@@ -154,7 +154,7 @@ def forecast_advanced(
         ),
         "forecast_hours": 48,
         "past_hours": 0,
-        "timezone": "Asia/Kolkata",
+        "timezone": "auto",
     }
 
     try:
@@ -179,10 +179,10 @@ def forecast_advanced(
 
     times = pd.DatetimeIndex(pd.to_datetime(hourly["time"]))
     if times.tz is None:
-        times = times.tz_localize(data.get("timezone", "Asia/Kolkata"))
+        times = times.tz_localize(data.get("timezone", "UTC"))
 
     # Keep only hours whose timestamps are at or after the current hour.
-    now_local = pd.Timestamp.now(tz=data.get("timezone", "Asia/Kolkata"))
+    now_local = pd.Timestamp.now(tz=data.get("timezone", "UTC"))
     current_hour = now_local.floor("h")
     keep = times >= current_hour
     times = times[keep]
@@ -400,3 +400,95 @@ def explain_forecast(
             status_code=502,
             detail=f"Gemini explanation failed: {str(exc)}",
         )
+
+
+@app.get("/evaluation/historical")
+def historical_evaluation(
+    date: str = Query("2023-02-20", pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    system_id: int = Query(10, ge=1),
+):
+    """Return historical PVDAQ AC-power observations, not forecast validation."""
+    from datetime import date as date_type
+
+    try:
+        requested_date = date_type.fromisoformat(date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Use date format YYYY-MM-DD.")
+
+    year, month, day = (
+        requested_date.year,
+        requested_date.month,
+        requested_date.day,
+    )
+    url = (
+        "https://oedi-data-lake.s3.amazonaws.com/pvdaq/parquet/"
+        f"pvdata/system_id={system_id}/year={year}/month={month}/day={day}/"
+        f"system_{system_id}__date_{year}_{month:02d}_{day:02d}.snappy.000.parquet"
+    )
+
+    try:
+        response = requests.get(url, timeout=30)
+        if response.status_code == 404:
+            raise HTTPException(
+                status_code=404,
+                detail="No PVDAQ data file found for this system and date.",
+            )
+        response.raise_for_status()
+        from io import BytesIO
+        frame = pd.read_parquet(BytesIO(response.content))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not retrieve or read PVDAQ data: {exc}",
+        )
+
+    if not {"measured_on", "metric_id", "value"}.issubset(frame.columns):
+        raise HTTPException(
+            status_code=502,
+            detail="PVDAQ file schema did not contain expected measurement columns.",
+        )
+
+    ac = frame.loc[
+        (frame["metric_id"] == 423),
+        ["measured_on", "value"],
+    ].dropna().copy()
+
+    if ac.empty:
+        raise HTTPException(
+            status_code=404,
+            detail="No AC-power readings (metric 423) found for this date.",
+        )
+
+    ac["measured_on"] = pd.to_datetime(ac["measured_on"], errors="coerce")
+    ac["value"] = pd.to_numeric(ac["value"], errors="coerce")
+    ac = ac.dropna().set_index("measured_on").sort_index()
+
+    hourly = ac["value"].resample("1h").mean().dropna()
+
+    return {
+        "dataset": "NREL PVDAQ public dataset",
+        "source_url": url,
+        "system_id": system_id,
+        "date": date,
+        "metric": {
+            "metric_id": 423,
+            "name": "AC power",
+            "units": "W",
+        },
+        "data_type": "historical measured observations",
+        "is_forecast_validation": False,
+        "readings": len(ac),
+        "hourly_buckets": len(hourly),
+        "observed_peak_ac_power_w": round(float(ac["value"].max()), 3),
+        "hourly_mean_ac_power_w": [
+            {"time": timestamp.isoformat(), "power_w": round(float(value), 3)}
+            for timestamp, value in hourly.items()
+        ],
+        "limitations": [
+            "Historical observations from system 10 in Colorado, not Jaipur.",
+            "Small negative readings may reflect sensor offsets.",
+            "This endpoint does not compare observations against a forecast.",
+        ],
+    }
