@@ -181,22 +181,6 @@ def forecast_advanced(
     if times.tz is None:
         times = times.tz_localize(data.get("timezone", "UTC"))
 
-    # Keep only hours whose timestamps are at or after the current hour.
-    now_local = pd.Timestamp.now(tz=data.get("timezone", "UTC"))
-    current_hour = now_local.floor("h")
-    keep = times >= current_hour
-    times = times[keep]
-
-    if len(times) == 0:
-        raise HTTPException(status_code=502, detail="Weather provider returned no current or future hours.")
-
-    # Filter every weather series with the same mask to keep inputs aligned.
-    for key in (
-        "temperature_2m", "wind_speed_10m", "shortwave_radiation",
-        "direct_normal_irradiance", "diffuse_radiation",
-    ):
-        hourly[key] = [value for value, include in zip(hourly[key], keep) if include]
-
     times_utc = times.tz_convert("UTC")
 
     temp_air = pd.Series(hourly["temperature_2m"], index=times_utc, dtype=float)
